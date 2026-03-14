@@ -45,9 +45,11 @@ make test
 **Service:** `CaptureService`
 **Default port:** `50051`
 **Proto file:** `proto/capture/capture.proto`
+**Reflection:** Enabled — tools like `grpcurl` can discover services without the proto file.
 
 The service exposes four RPCs. All accept standard gRPC metadata. When TLS is
-enabled on the server, clients must use a TLS channel.
+enabled on the server, clients must use a TLS channel (use `-insecure` with
+grpcurl for self-signed certs).
 
 ---
 
@@ -612,7 +614,8 @@ to an explicit allowlist via `-allowed-interfaces`.
 ### 5. Container Hardening
 
 Non-root user, `CAP_NET_RAW` only (all others dropped), read-only root
-filesystem, `no-new-privileges`, CPU and memory resource limits.
+filesystem, CPU and memory resource limits. `CAP_NET_RAW` is granted to the
+tcpdump binary via file capabilities (`setcap`), not to the user.
 
 ### 6. Rate Limiting
 
@@ -624,9 +627,11 @@ requests.
 
 ## Docker Compose
 
-The provided `docker-compose.yml` uses `network_mode: host` so the container
-can see all host interfaces. For capturing on a specific Docker network, remove
-`network_mode: host` and attach to the target network instead.
+The provided `docker-compose.yml` uses `network_mode: service:iperf3-local` so
+the capture container shares the network namespace of the iperf3 service. This
+means captures see the same interfaces, IPs, and `/proc/net` stats as the
+iperf3 container. To capture on host interfaces instead, change to
+`network_mode: host`.
 
 ## TLS
 
