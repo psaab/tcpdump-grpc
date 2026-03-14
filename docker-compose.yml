@@ -1,0 +1,71 @@
+services:
+  tcpdump-grpc:
+    build: .
+    container_name: tcpdump-grpc
+    restart: unless-stopped
+    ports:
+      - "50051:50051"
+
+    # ── Security ────────────────────────────────────────────
+    # Drop ALL capabilities, then add ONLY what tcpdump needs.
+    # NET_RAW  = raw socket access for packet capture
+    # NET_ADMIN = needed for some interface operations
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+    # Prevent privilege escalation
+    security_opt:
+      - no-new-privileges:true
+
+    # Read-only root filesystem
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+
+    # ── Networking ──────────────────────────────────────────
+    # host networking gives access to all host interfaces.
+    # For isolated captures, use a specific network instead.
+    network_mode: service:iperf3-local
+
+    # ── Resource limits ─────────────────────────────────────
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 64M
+
+    # ── TLS ─────────────────────────────────────────────────
+    # Mount your TLS certs read-only
+    volumes:
+      - ./tls:/etc/tcpdump-grpc/tls:ro
+
+    # ── Configuration ───────────────────────────────────────
+    command:
+      - "-listen"
+      - ":50051"
+      - "-tls-cert"
+      - "/etc/tcpdump-grpc/tls/server.crt"
+      - "-tls-key"
+      - "/etc/tcpdump-grpc/tls/server.key"
+      - "-max-duration"
+      - "300"
+      - "-max-concurrent"
+      - "10"
+      - "-rate-per-ip"
+      - "3"
+      - "-log-json"
+      # Uncomment to restrict to specific interfaces:
+      # - "-allowed-interfaces"
+      # - "eth0,ens192"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

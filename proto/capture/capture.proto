@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package capture;
+
+option go_package = "github.com/tcpdump-grpc/proto/capture";
+
+// CaptureService provides remote packet capture via tcpdump.
+// The BPF filter is validated and passed as discrete arguments—never
+// through a shell—to prevent injection attacks.
+service CaptureService {
+  // StartCapture begins a packet capture and streams pcap data back.
+  // The server-side stream terminates when:
+  //   - The requested duration expires
+  //   - The client cancels the RPC / disconnects
+  //   - The max_packets limit is reached
+  //   - An error occurs
+  // In all cases the underlying tcpdump process is killed.
+  rpc StartCapture(CaptureRequest) returns (stream CaptureResponse);
+
+  // ValidateFilter checks whether a BPF filter compiles without
+  // actually starting a capture. Useful for UI pre-validation.
+  rpc ValidateFilter(ValidateFilterRequest) returns (ValidateFilterResponse);
+
+  // ListInterfaces returns the network interfaces available for capture.
+  rpc ListInterfaces(ListInterfacesRequest) returns (ListInterfacesResponse);
+
+  // GetProcNetStats returns the contents of /proc/net pseudo-files
+  // for network diagnostics (dev, tcp, udp, snmp, netstat, etc.).
+  rpc GetProcNetStats(ProcNetStatsRequest) returns (ProcNetStatsResponse);
+}
+
+message CaptureRequest {
+  // BPF filter expression (e.g. "tcp port 80 and host 10.0.0.1").
+  // Validated server-side before use. Empty means capture all.
+  string bpf_filter = 1;
+
+  // Network interface to capture on. Empty = default (usually first non-lo).
+  string interface = 2;
+
+  // Maximum capture duration in seconds. 0 = server default (60s).
+  // Hard-capped server-side to prevent runaway captures.
+  uint32 duration_seconds = 3;
+
+  // Snap length (bytes per packet). 0 = full packet (65535).
+  uint32 snap_len = 4;
+
+  // Maximum number of packets to capture. 0 = unlimited (duration-bound).
+  uint64 max_packets = 5;
+
+  // If true, return decoded text lines instead of raw pcap bytes.
+  bool text_output = 6;
+
+  // Verbosity for text output: 0 = default, 1 = -v, 2 = -vv, 3 = -vvv.
+  uint32 verbosity = 7;
+
+  // If true, don't resolve hostnames (-n flag).
+  bool no_resolve = 8;
+}
+
+message CaptureResponse {
+  oneof payload {
+    // Raw pcap data chunk (when text_output = false).
+    bytes pcap_data = 1;
+
+    // Decoded text line (when text_output = true).
+    string text_line = 2;
+
+    // Informational/status message from the server.
+    StatusMessage status = 3;
+  }
+
+  // Monotonic sequence number for ordering / loss detection.
+  uint64 sequence = 10;
+}
+
+message StatusMessage {
+  enum Level {
+    INFO = 0;
+    WARNING = 1;
+    ERROR = 2;
+  }
+  Level level = 1;
+  string message = 2;
+
+  // Stats populated when capture ends.
+  CaptureStats stats = 3;
+}
+
+message CaptureStats {
+  uint64 packets_captured = 1;
+  uint64 packets_dropped = 2;
+  double duration_seconds = 3;
+  uint64 bytes_captured = 4;
+}
+
+message ValidateFilterRequest {
+  string bpf_filter = 1;
+}
+
+message ValidateFilterResponse {
+  bool valid = 1;
+  string error = 2;
+}
+
+message ListInterfacesRequest {}
+
+message ListInterfacesResponse {
+  repeated NetworkInterface interfaces = 1;
+}
+
+message NetworkInterface {
+  string name = 1;
+  string description = 2;
+  repeated string addresses = 3;
+  bool up = 4;
+}
+
+// ProcNetStatsRequest selects which /proc/net files to return.
+message ProcNetStatsRequest {
+  // Specific file names to read (e.g. "dev", "tcp", "snmp").
+  // If empty, all known stat files are returned.
+  repeated string files = 1;
+}
+
+// ProcNetStatsResponse contains the contents of requested /proc/net files.
+message ProcNetStatsResponse {
+  // Map of filename (e.g. "dev", "tcp") to its parsed or raw content.
+  repeated ProcNetFile entries = 1;
+}
+
+// ProcNetFile holds the content of one /proc/net pseudo-file.
+message ProcNetFile {
+  // File name relative to /proc/net (e.g. "dev", "snmp", "tcp6").
+  string name = 1;
+  // Raw text content of the file.
+  string content = 2;
+  // Error message if the file could not be read (permission denied, etc.).
+  string error = 3;
+}
