@@ -655,31 +655,63 @@ capture-client -server localhost:50051 -filter "tcp port 80" -text
 
 ## MCP Server (Model Context Protocol)
 
-An MCP server is included at `cmd/mcp-server/main.go`. It connects to the
-gRPC backend and exposes all four RPCs as MCP tools, allowing AI assistants
-like Claude to invoke packet captures, validate filters, list interfaces,
-and read `/proc/net` stats directly.
+An MCP server (`cmd/mcp-server`) bridges the gRPC backend to the
+[Model Context Protocol](https://modelcontextprotocol.io/), letting AI
+assistants (Claude Code, Cursor, Windsurf, or any MCP client) capture packets,
+validate filters, inspect interfaces, and read kernel network stats — all
+through natural language.
 
-### Setup with Claude Code
+See [`docs/AGENT.md`](docs/AGENT.md) for the full agent-consumable tool
+reference that AI systems can use to understand available capabilities.
 
-Add to `~/.claude/claude_code_config.json`:
+### Quick Setup
+
+**1. Extract the binary from the Docker image:**
+
+```bash
+docker cp tcpdump-grpc:/usr/local/bin/mcp-server ./bin/mcp-server
+```
+
+Or build locally:
+
+```bash
+make build   # produces bin/mcp-server
+```
+
+**2. Configure your MCP client:**
+
+Claude Code (`~/.claude/claude_code_config.json`):
 
 ```json
 {
   "mcpServers": {
     "tcpdump": {
-      "command": "/path/to/mcp-server",
+      "command": "/path/to/bin/mcp-server",
       "args": ["-server", "172.16.80.200:50051", "-insecure"]
     }
   }
 }
 ```
 
-Or if the binary is inside the Docker image, copy it out first:
+VS Code / Cursor (`.vscode/mcp.json`):
 
-```bash
-docker cp tcpdump-grpc:/usr/local/bin/mcp-server ./bin/mcp-server
+```json
+{
+  "servers": {
+    "tcpdump": {
+      "command": "/path/to/bin/mcp-server",
+      "args": ["-server", "172.16.80.200:50051", "-insecure"]
+    }
+  }
+}
 ```
+
+**3. Start using it:**
+
+> "Capture TCP port 443 traffic on eth0 for 5 seconds"
+> "Save a pcap of DNS traffic to /tmp/dns.pcap"
+> "Show me /proc/net/dev and /proc/net/snmp counters"
+> "List the network interfaces on the capture server"
 
 ### MCP Server Flags
 
@@ -692,23 +724,13 @@ docker cp tcpdump-grpc:/usr/local/bin/mcp-server ./bin/mcp-server
 
 ### MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `capture` | Capture network packets. Returns decoded text lines with stats. Duration clamped to 60s for MCP use. |
-| `validate_filter` | Validate a BPF filter expression without capturing. |
-| `list_interfaces` | List network interfaces available for capture. |
-| `proc_net_stats` | Read `/proc/net` pseudo-files (dev, tcp, snmp, netstat, etc.). |
-
-### Example Prompts
-
-Once configured, you can ask Claude things like:
-
-- "Capture TCP port 443 traffic on eth0 for 5 seconds"
-- "Show me the current /proc/net/dev counters"
-- "List the network interfaces on the capture server"
-- "Is the filter `tcp port 80 and host 10.0.0.1` valid?"
-- "Capture DNS traffic for 10 seconds and tell me what domains are being queried"
-- "Check /proc/net/snmp and /proc/net/netstat for TCP retransmit stats"
+| Tool | Output | Description |
+|------|--------|-------------|
+| `capture` | Text | Capture packets and return decoded text lines with stats. Duration clamped to 60s. |
+| `capture_pcap` | File | Capture packets and write raw pcap to a file. Returns path and stats. |
+| `validate_filter` | Text | Check if a BPF filter compiles without starting a capture. |
+| `list_interfaces` | Text | List network interfaces with addresses and up/down state. |
+| `proc_net_stats` | Text | Read `/proc/net` pseudo-files (dev, tcp, snmp, netstat, etc.). |
 
 ---
 
