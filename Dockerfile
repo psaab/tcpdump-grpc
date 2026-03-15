@@ -36,6 +36,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /build/capture-client \
     ./cmd/capture-client
 
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -o /build/mcp-server \
+    ./cmd/mcp-server
+
 # ============================================================
 # Stage 2: Minimal runtime image
 # ============================================================
@@ -62,6 +67,7 @@ RUN setcap cap_net_raw+eip /usr/bin/tcpdump
 # Copy the binaries
 COPY --from=builder /build/tcpdump-grpc /usr/local/bin/tcpdump-grpc
 COPY --from=builder /build/capture-client /usr/local/bin/capture-client
+COPY --from=builder /build/mcp-server /usr/local/bin/mcp-server
 
 # TLS certificates mount point
 RUN mkdir -p /etc/tcpdump-grpc/tls && chown capturer:capturer /etc/tcpdump-grpc/tls

@@ -13,6 +13,7 @@ proto:
 build: proto
 	CGO_ENABLED=0 go build -ldflags='-w -s' -o bin/tcpdump-grpc ./cmd/tcpdump-grpc
 	CGO_ENABLED=0 go build -ldflags='-w -s' -o bin/capture-client ./cmd/capture-client
+	CGO_ENABLED=0 go build -ldflags='-w -s' -o bin/mcp-server ./cmd/mcp-server
 
 # ── Docker ───────────────────────────────────────────────
 docker:

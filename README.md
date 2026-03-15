@@ -653,6 +653,65 @@ tcpdump-grpc -listen :50051
 capture-client -server localhost:50051 -filter "tcp port 80" -text
 ```
 
+## MCP Server (Model Context Protocol)
+
+An MCP server is included at `cmd/mcp-server/main.go`. It connects to the
+gRPC backend and exposes all four RPCs as MCP tools, allowing AI assistants
+like Claude to invoke packet captures, validate filters, list interfaces,
+and read `/proc/net` stats directly.
+
+### Setup with Claude Code
+
+Add to `~/.claude/claude_code_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "tcpdump": {
+      "command": "/path/to/mcp-server",
+      "args": ["-server", "172.16.80.200:50051", "-insecure"]
+    }
+  }
+}
+```
+
+Or if the binary is inside the Docker image, copy it out first:
+
+```bash
+docker cp tcpdump-grpc:/usr/local/bin/mcp-server ./bin/mcp-server
+```
+
+### MCP Server Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-server` | `localhost:50051` | gRPC server address |
+| `-tls` | `false` | Use TLS to connect to gRPC server |
+| `-insecure` | `false` | Skip TLS certificate verification (self-signed certs) |
+| `-max-lines` | `500` | Maximum text lines to return from a capture |
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `capture` | Capture network packets. Returns decoded text lines with stats. Duration clamped to 60s for MCP use. |
+| `validate_filter` | Validate a BPF filter expression without capturing. |
+| `list_interfaces` | List network interfaces available for capture. |
+| `proc_net_stats` | Read `/proc/net` pseudo-files (dev, tcp, snmp, netstat, etc.). |
+
+### Example Prompts
+
+Once configured, you can ask Claude things like:
+
+- "Capture TCP port 443 traffic on eth0 for 5 seconds"
+- "Show me the current /proc/net/dev counters"
+- "List the network interfaces on the capture server"
+- "Is the filter `tcp port 80 and host 10.0.0.1` valid?"
+- "Capture DNS traffic for 10 seconds and tell me what domains are being queried"
+- "Check /proc/net/snmp and /proc/net/netstat for TCP retransmit stats"
+
+---
+
 ## CLI Client
 
 A reference client is included at `cmd/capture-client/main.go`:
