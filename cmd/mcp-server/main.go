@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -85,6 +87,43 @@ func main() {
 			),
 		),
 		makeCaptureHandler(client, *maxLines),
+	)
+
+	// ── Tool: capture_pcap ──────────────────────────────────
+	s.AddTool(
+		mcp.NewTool("capture_pcap",
+			mcp.WithDescription(
+				"Capture network packets and save raw pcap to a file. "+
+					"The file can be opened with Wireshark, tcpdump, or tshark. "+
+					"Returns the file path and capture statistics.",
+			),
+			mcp.WithString("bpf_filter",
+				mcp.Description(
+					"BPF filter expression (tcpdump syntax). Examples: "+
+						"\"tcp port 80\", \"host 10.0.0.1\", \"udp port 53\". "+
+						"Empty means capture all.",
+				),
+			),
+			mcp.WithString("interface",
+				mcp.Description("Network interface to capture on (e.g. \"eth0\"). Empty for server default."),
+			),
+			mcp.WithNumber("duration_seconds",
+				mcp.Description("Capture duration in seconds (default: 10, max: 300)."),
+			),
+			mcp.WithNumber("snap_len",
+				mcp.Description("Max bytes per packet (0 = full packet, 65535)."),
+			),
+			mcp.WithNumber("max_packets",
+				mcp.Description("Stop after this many packets (0 = unlimited)."),
+			),
+			mcp.WithString("output_file",
+				mcp.Description("Output file path. Default: /tmp/capture-<timestamp>.pcap"),
+			),
+			mcp.WithBoolean("no_resolve",
+				mcp.Description("Don't resolve hostnames. Default: true."),
+			),
+		),
+		makeCapturePcapHandler(client),
 	)
 
 	// ── Tool: validate_filter ────────────────────────────────
@@ -218,6 +257,97 @@ func makeCaptureHandler(client pb.CaptureServiceClient, maxLines int) server.Too
 			fmt.Fprintf(&b, "Bytes captured:   %d\n", stats.BytesCaptured)
 			fmt.Fprintf(&b, "Duration:         %.1fs\n", stats.DurationSeconds)
 		}
+
+		return mcp.NewToolResultText(b.String()), nil
+	}
+}
+
+func makeCapturePcapHandler(client pb.CaptureServiceClient) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		bpfFilter := req.GetString("bpf_filter", "")
+		iface := req.GetString("interface", "")
+		duration := uint32(req.GetFloat("duration_seconds", 10))
+		snapLen := uint32(req.GetFloat("snap_len", 0))
+		maxPackets := uint64(req.GetFloat("max_packets", 0))
+		noResolve := req.GetBool("no_resolve", true)
+		outputFile := req.GetString("output_file", "")
+
+		if duration == 0 {
+			duration = 10
+		}
+
+		// Generate default output path
+		if outputFile == "" {
+			outputFile = filepath.Join(os.TempDir(),
+				fmt.Sprintf("capture-%s.pcap", time.Now().Format("20060102-150405")))
+		}
+
+		captureCtx, cancel := context.WithTimeout(ctx, time.Duration(duration+10)*time.Second)
+		defer cancel()
+
+		stream, err := client.StartCapture(captureCtx, &pb.CaptureRequest{
+			BpfFilter:       bpfFilter,
+			Interface:       iface,
+			DurationSeconds: duration,
+			SnapLen:         snapLen,
+			MaxPackets:      maxPackets,
+			TextOutput:      false,
+			NoResolve:       noResolve,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("start capture: %v", err)), nil
+		}
+
+		f, err := os.Create(outputFile)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("create output file: %v", err)), nil
+		}
+		defer f.Close()
+
+		var stats *pb.CaptureStats
+		var totalBytes int64
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				if captureCtx.Err() != nil {
+					break
+				}
+				return mcp.NewToolResultError(fmt.Sprintf("recv: %v", err)), nil
+			}
+
+			switch p := resp.Payload.(type) {
+			case *pb.CaptureResponse_PcapData:
+				n, err := f.Write(p.PcapData)
+				if err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("write pcap: %v", err)), nil
+				}
+				totalBytes += int64(n)
+			case *pb.CaptureResponse_Status:
+				if p.Status.Stats != nil {
+					stats = p.Status.Stats
+				}
+			}
+		}
+
+		var b strings.Builder
+		fmt.Fprintf(&b, "Pcap written to: %s\n", outputFile)
+		fmt.Fprintf(&b, "File size: %d bytes\n", totalBytes)
+
+		if stats != nil {
+			fmt.Fprintf(&b, "\n--- Capture Stats ---\n")
+			fmt.Fprintf(&b, "Packets captured: %d\n", stats.PacketsCaptured)
+			fmt.Fprintf(&b, "Packets dropped:  %d\n", stats.PacketsDropped)
+			fmt.Fprintf(&b, "Bytes captured:   %d\n", stats.BytesCaptured)
+			fmt.Fprintf(&b, "Duration:         %.1fs\n", stats.DurationSeconds)
+		}
+
+		fmt.Fprintf(&b, "\nOpen with: tcpdump -r %s", outputFile)
+		fmt.Fprintf(&b, "\n     or:   tshark -r %s", outputFile)
+		fmt.Fprintf(&b, "\n     or:   wireshark %s", outputFile)
 
 		return mcp.NewToolResultText(b.String()), nil
 	}
